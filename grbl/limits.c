@@ -40,25 +40,24 @@
 
 void limits_init()
 {
-  LIMIT_DDR &= ~(LIMIT_MASK); // Set as input pins
+  GPIO_INIT_PINS(LIMIT);
 
-  #ifdef DISABLE_LIMIT_PIN_PULL_UP
-    LIMIT_PORT &= ~(LIMIT_MASK); // Normal low operation. Requires external pull-down.
-  #else
-    LIMIT_PORT |= (LIMIT_MASK);  // Enable internal pull-up resistors. Normal high operation.
+  #ifdef GPIO_PULLUP_PINS
+    #ifdef DISABLE_LIMIT_PIN_PULL_UP
+      GPIO_PULLUP_PINS(LIMIT, false); // Normal low operation. Requires external pull-down.
+    #else
+      GPIO_PULLUP_PINS(LIMIT, true);  // Enable internal pull-up resistors. Normal high operation.
+    #endif
   #endif
 
   if (bit_istrue(settings.flags,BITFLAG_HARD_LIMIT_ENABLE)) {
-    LIMIT_PCMSK |= LIMIT_MASK; // Enable specific pins of the Pin Change Interrupt
-    PCICR |= (1 << LIMIT_INT); // Enable Pin Change Interrupt
+    GPIO_IRQ_PINS(LIMIT, true);
   } else {
     limits_disable();
   }
 
   #ifdef ENABLE_SOFTWARE_DEBOUNCE
-    MCUSR &= ~(1<<WDRF);
-    WDTCSR |= (1<<WDCE) | (1<<WDE);
-    WDTCSR = (1<<WDP0); // Set time-out at ~32msec.
+    DT_INIT;
   #endif
 }
 
@@ -66,8 +65,7 @@ void limits_init()
 // Disables hard limits.
 void limits_disable()
 {
-  LIMIT_PCMSK &= ~LIMIT_MASK;  // Disable specific pins of the Pin Change Interrupt
-  PCICR &= ~(1 << LIMIT_INT);  // Disable Pin Change Interrupt
+  GPIO_IRQ_PINS(LIMIT, false);
 }
 
 
@@ -77,18 +75,18 @@ void limits_disable()
 uint8_t limits_get_state()
 {
   uint8_t limit_state = 0;
-  uint8_t pin = (LIMIT_PIN & LIMIT_MASK);
+  uint8_t pin = GPIO_GET_PINS(LIMIT);
   #ifdef INVERT_LIMIT_PIN_MASK
     pin ^= INVERT_LIMIT_PIN_MASK;
   #endif
-  if (bit_isfalse(settings.flags,BITFLAG_INVERT_LIMIT_PINS)) { pin ^= LIMIT_MASK; }
+  if (bit_isfalse(settings.flags,BITFLAG_INVERT_LIMIT_PINS)) { pin = ~pin; }
   if (pin) {
     uint8_t idx;
     for (idx=0; idx<N_AXIS; idx++) {
       if (pin & get_limit_pin_mask(idx)) { limit_state |= (1 << idx); }
     }
     #ifdef ENABLE_DUAL_AXIS
-      if (pin & (1<<DUAL_LIMIT_BIT)) { limit_state |= (1 << N_AXIS); }
+      if (pin & (1<<LIMIT_DUAL_BIT)) { limit_state |= (1 << N_AXIS); }
     #endif
   }
   return(limit_state);
@@ -131,18 +129,18 @@ uint8_t limits_get_state()
   }
 #else // OPTIONAL: Software debounce limit pin routine.
   // Upon limit pin change, enable watchdog timer to create a short delay. 
-  ISR(LIMIT_INT_vect) { if (!(WDTCSR & (1<<WDIE))) { WDTCSR |= (1<<WDIE); } }
-  ISR(WDT_vect) // Watchdog timer ISR
+  ISR(LIMIT_INT_vect) { DT_START; }
+  ISR(DT_INT_vect) // Watchdog timer ISR
   {
-    WDTCSR &= ~(1<<WDIE); // Disable watchdog timer. 
+    DT_STOP;
     if (sys.state != STATE_ALARM) {  // Ignore if already in alarm state. 
       if (!(sys_rt_exec_alarm)) {
-        // Check limit pin state. 
+        // Check limit pin state.
         if (limits_get_state()) {
           mc_reset(); // Initiate system kill.
           system_set_exec_alarm(EXEC_ALARM_HARD_LIMIT); // Indicate hard limit critical event
         }
-      }  
+      }
     }
   }
 #endif
@@ -201,7 +199,7 @@ void limits_go_home(uint8_t cycle_mask)
     }
   }
   #ifdef ENABLE_DUAL_AXIS
-    step_pin_dual = (1<<DUAL_STEP_BIT);
+    step_pin_dual = (1<<STEP_DUAL_BIT);
   #endif
 
   // Set search mode with approach at seek rate to quickly engage the specified cycle_mask limit switches.
@@ -340,9 +338,9 @@ void limits_go_home(uint8_t cycle_mask)
       }
 
     #ifdef ENABLE_DUAL_AXIS
-      } while ((STEP_MASK & axislock) || (sys.homing_axis_lock_dual));
+      } while ((axislock & GPIO_PINS_MASK(STEP)) || (sys.homing_axis_lock_dual));
     #else
-      } while (STEP_MASK & axislock);
+      } while (axislock & GPIO_PINS_MASK(STEP));
     #endif
 
     st_reset(); // Immediately force kill steppers and reset step segment buffer.

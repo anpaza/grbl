@@ -62,26 +62,6 @@ uint8_t serial_get_tx_buffer_count()
 }
 
 
-void serial_init()
-{
-  // Set baud rate
-  #if BAUD_RATE < 57600
-    uint16_t UBRR0_value = ((F_CPU / (8L * BAUD_RATE)) - 1)/2 ;
-    UCSR0A &= ~(1 << U2X0); // baud doubler off  - Only needed on Uno XXX
-  #else
-    uint16_t UBRR0_value = ((F_CPU / (4L * BAUD_RATE)) - 1)/2;
-    UCSR0A |= (1 << U2X0);  // baud doubler on for high baud rates, i.e. 115200
-  #endif
-  UBRR0H = UBRR0_value >> 8;
-  UBRR0L = UBRR0_value;
-
-  // enable rx, tx, and interrupt on complete reception of a byte
-  UCSR0B |= (1<<RXEN0 | 1<<TXEN0 | 1<<RXCIE0);
-
-  // defaults to 8-bit, no parity, 1 stop bit
-}
-
-
 // Writes one byte to the TX serial buffer. Called by main program.
 void serial_write(uint8_t data) {
   // Calculate next head
@@ -98,18 +78,17 @@ void serial_write(uint8_t data) {
   serial_tx_buffer[serial_tx_buffer_head] = data;
   serial_tx_buffer_head = next_head;
 
-  // Enable Data Register Empty Interrupt to make sure tx-streaming is running
-  UCSR0B |=  (1 << UDRIE0);
+  // Arch-specific code to make sure tx-streaming is running
+  SERIAL_START_WRITE;
 }
 
 
 // Data Register Empty Interrupt handler
-ISR(SERIAL_UDRE)
+ISR(SERIAL_UDRE_vect)
 {
   uint8_t tail = serial_tx_buffer_tail; // Temporary serial_tx_buffer_tail (to optimize for volatile)
 
-  // Send a byte from the buffer
-  UDR0 = serial_tx_buffer[tail];
+  SERIAL_OUT (serial_tx_buffer[tail]);
 
   // Update tail position
   tail++;
@@ -117,8 +96,8 @@ ISR(SERIAL_UDRE)
 
   serial_tx_buffer_tail = tail;
 
-  // Turn off Data Register Empty Interrupt to stop tx-streaming if this concludes the transfer
-  if (tail == serial_tx_buffer_head) { UCSR0B &= ~(1 << UDRIE0); }
+  // Stop tx-streaming if this concludes the transfer
+  if (tail == serial_tx_buffer_head) { SERIAL_STOP_WRITE; }
 }
 
 
@@ -140,9 +119,9 @@ uint8_t serial_read()
 }
 
 
-ISR(SERIAL_RX)
+ISR(SERIAL_RX_vect)
 {
-  uint8_t data = UDR0;
+  uint8_t data = SERIAL_IN;
   uint8_t next_head;
 
   // Pick off realtime command characters directly from the serial stream. These characters are
