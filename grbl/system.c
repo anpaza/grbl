@@ -23,16 +23,19 @@
 
 void system_init()
 {
-  CONTROL_DDR &= ~(CONTROL_MASK); // Configure as input pins
-  #ifdef DISABLE_CONTROL_PIN_PULL_UP
-    CONTROL_PORT &= ~(CONTROL_MASK); // Normal low operation. Requires external pull-down.
-  #else
-    CONTROL_PORT |= CONTROL_MASK;   // Enable internal pull-up resistors. Normal high operation.
+  GPIO_INIT_PINS(CONTROL); // Configure as input pins
+  #ifdef GPIO_PULLUP_PINS
+    #ifdef DISABLE_CONTROL_PIN_PULL_UP
+      // Normal low operation. Requires external pull-down.
+      GPIO_PULLUP_PINS(CONTROL, 0)
+    #else
+      // Enable internal pull-up resistors. Normal high operation.
+      GPIO_PULLUP_PINS(CONTROL, GPIO_PINS_MASK(CONTROL));
+    #endif
   #endif
-  CONTROL_PCMSK |= CONTROL_MASK;  // Enable specific pins of the Pin Change Interrupt
-  PCICR |= (1 << CONTROL_INT);   // Enable Pin Change Interrupt
+  // Enable Pin Change Interrupt
+  GPIO_IRQ_PINS(CONTROL, true);
 }
-
 
 // Returns control pin state as a uint8 bitfield. Each bit indicates the input pin state, where
 // triggered is 1 and not triggered is 0. Invert mask is applied. Bitfield organization is
@@ -40,7 +43,7 @@ void system_init()
 uint8_t system_control_get_state()
 {
   uint8_t control_state = 0;
-  uint8_t pin = (CONTROL_PIN & CONTROL_MASK) ^ CONTROL_MASK;
+  uint8_t pin = GPIO_GET_PINS(CONTROL) ^ GPIO_PINS_MASK(CONTROL);
   #ifdef INVERT_CONTROL_PIN_MASK
     pin ^= INVERT_CONTROL_PIN_MASK;
   #endif
@@ -249,6 +252,7 @@ uint8_t system_execute_line(char *line)
             helper_var = true;  // Set helper_var to flag storing method.
             // No break. Continues into default: to read remaining command characters.
           }
+          // fall-through
         default :  // Storing setting methods [IDLE/ALARM]
           if(!read_float(line, &char_counter, &parameter)) { return(STATUS_BAD_NUMBER_FORMAT); }
           if(line[char_counter++] != '=') { return(STATUS_INVALID_STATEMENT); }
@@ -354,57 +358,33 @@ uint8_t system_check_travel_limits(float *target)
 
 // Special handlers for setting and clearing Grbl's real-time execution flags.
 void system_set_exec_state_flag(uint8_t mask) {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_state |= (mask);
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_state |= (mask));
 }
 
 void system_clear_exec_state_flag(uint8_t mask) {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_state &= ~(mask);
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_state &= ~(mask));
 }
 
 void system_set_exec_alarm(uint8_t code) {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_alarm = code;
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_alarm = code);
 }
 
 void system_clear_exec_alarm() {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_alarm = 0;
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_alarm = 0);
 }
 
 void system_set_exec_motion_override_flag(uint8_t mask) {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_motion_override |= (mask);
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_motion_override |= (mask));
 }
 
 void system_set_exec_accessory_override_flag(uint8_t mask) {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_accessory_override |= (mask);
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_accessory_override |= (mask));
 }
 
 void system_clear_exec_motion_overrides() {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_motion_override = 0;
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_motion_override = 0);
 }
 
 void system_clear_exec_accessory_overrides() {
-  uint8_t sreg = SREG;
-  cli();
-  sys_rt_exec_accessory_override = 0;
-  SREG = sreg;
+  ATOMIC (sys_rt_exec_accessory_override = 0);
 }

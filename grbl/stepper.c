@@ -107,7 +107,7 @@ typedef struct {
 
   uint8_t execute_step;     // Flags step execution for each interrupt.
   uint8_t step_pulse_time;  // Step pulse reset time after step rise
-  uint8_t step_outbits;         // The next stepping-bits to be output
+  uint8_t step_outbits;     // The next stepping-bits to be output
   uint8_t dir_outbits;
   #ifdef ENABLE_DUAL_AXIS
     uint8_t step_outbits_dual;
@@ -224,8 +224,7 @@ static st_prep_t prep;
 void st_wake_up()
 {
   // Enable stepper drivers.
-  if (bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE)) { STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); }
-  else { STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); }
+  GPIO_SET_PIN(STEPPERS_DISABLE, bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE));
 
   // Initialize stepper output bits to ensure first ISR call does not step.
   st.step_outbits = step_port_invert_mask;
@@ -242,7 +241,7 @@ void st_wake_up()
   #endif
 
   // Enable Stepper Driver Interrupt
-  TIMSK1 |= (1<<OCIE1A);
+  SPT_START;
 }
 
 
@@ -250,8 +249,7 @@ void st_wake_up()
 void st_go_idle()
 {
   // Disable Stepper Driver Interrupt. Allow Stepper Port Reset Interrupt to finish, if active.
-  TIMSK1 &= ~(1<<OCIE1A); // Disable Timer1 interrupt
-  TCCR1B = (TCCR1B & ~((1<<CS12) | (1<<CS11))) | (1<<CS10); // Reset clock to no prescaling.
+  SPT_STOP;
   busy = false;
 
   // Set stepper driver idle state, disabled or enabled, depending on settings and circumstances.
@@ -263,8 +261,7 @@ void st_go_idle()
     pin_state = true; // Override. Disable steppers.
   }
   if (bit_istrue(settings.flags,BITFLAG_INVERT_ST_ENABLE)) { pin_state = !pin_state; } // Apply pin invert.
-  if (pin_state) { STEPPERS_DISABLE_PORT |= (1<<STEPPERS_DISABLE_BIT); }
-  else { STEPPERS_DISABLE_PORT &= ~(1<<STEPPERS_DISABLE_BIT); }
+  GPIO_SET_PIN(STEPPERS_DISABLE, pin_state);
 }
 
 
@@ -321,28 +318,29 @@ ISR(TIMER1_COMPA_vect)
   if (busy) { return; } // The busy-flag is used to avoid reentering this interrupt
 
   // Set the direction pins a couple of nanoseconds before we step the steppers
-  DIRECTION_PORT = (DIRECTION_PORT & ~DIRECTION_MASK) | (st.dir_outbits & DIRECTION_MASK);
+  GPIO_SET_PINS(DIRECTION, st.dir_outbits);
+
   #ifdef ENABLE_DUAL_AXIS
-    DIRECTION_PORT_DUAL = (DIRECTION_PORT_DUAL & ~DIRECTION_MASK_DUAL) | (st.dir_outbits_dual & DIRECTION_MASK_DUAL);
+    GPIO_SET_PINS(DIRECTION_DUAL, st.dir_outbits_dual);
   #endif
 
   // Then pulse the stepping pins
   #ifdef STEP_PULSE_DELAY
-    st.step_bits = (STEP_PORT & ~STEP_MASK) | st.step_outbits; // Store out_bits to prevent overwriting.
+    st.step_bits = st.step_outbits; // Store out_bits to prevent overwriting.
     #ifdef ENABLE_DUAL_AXIS
-      st.step_bits_dual = (STEP_PORT_DUAL & ~STEP_MASK_DUAL) | st.step_outbits_dual;
+      st.step_bits_dual = st.step_outbits_dual;
     #endif
   #else  // Normal operation
-    STEP_PORT = (STEP_PORT & ~STEP_MASK) | st.step_outbits;
+    GPIO_SET_PINS(STEP, st.step_outbits);
     #ifdef ENABLE_DUAL_AXIS
-      STEP_PORT_DUAL = (STEP_PORT_DUAL & ~STEP_MASK_DUAL) | st.step_outbits_dual;
+      GPIO_SET_PINS(STEP_DUAL, st.step_outbits_dual);
     #endif
   #endif
 
   // Enable step pulse reset timer so that The Stepper Port Reset Interrupt can reset the signal after
   // exactly settings.pulse_microseconds microseconds, independent of the main Timer1 prescaler.
-  TCNT0 = st.step_pulse_time; // Reload Timer0 counter
-  TCCR0B = (1<<CS01); // Begin Timer0. Full speed, 1/8 prescaler
+  SRT_SET(st.step_pulse_time);
+  SRT_START;
 
   busy = true;
   sei(); // Re-enable interrupts to allow Stepper Port Reset Interrupt to fire on-time.
@@ -361,7 +359,7 @@ ISR(TIMER1_COMPA_vect)
       #endif
 
       // Initialize step segment timing per step and load number of steps to execute.
-      OCR1A = st.exec_segment->cycles_per_tick;
+      SPT_SET (st.exec_segment->cycles_per_tick);
       st.step_count = st.exec_segment->n_step; // NOTE: Can sometimes be zero when moving slow.
       // If the new segment starts a new planner block, initialize stepper variables and counters.
       // NOTE: When the segment data index changes, this indicates a new planner block.
@@ -420,7 +418,7 @@ ISR(TIMER1_COMPA_vect)
   if (st.counter_x > st.exec_block->step_event_count) {
     st.step_outbits |= (1<<X_STEP_BIT);
     #if defined(ENABLE_DUAL_AXIS) && (DUAL_AXIS_SELECT == X_AXIS)
-      st.step_outbits_dual = (1<<DUAL_STEP_BIT);
+      st.step_outbits_dual = (1<<STEP_DUAL_BIT);
     #endif
     st.counter_x -= st.exec_block->step_event_count;
     if (st.exec_block->direction_bits & (1<<X_DIRECTION_BIT)) { sys_position[X_AXIS]--; }
@@ -434,7 +432,7 @@ ISR(TIMER1_COMPA_vect)
   if (st.counter_y > st.exec_block->step_event_count) {
     st.step_outbits |= (1<<Y_STEP_BIT);
     #if defined(ENABLE_DUAL_AXIS) && (DUAL_AXIS_SELECT == Y_AXIS)
-      st.step_outbits_dual = (1<<DUAL_STEP_BIT);
+      st.step_outbits_dual = (1<<STEP_DUAL_BIT);
     #endif
     st.counter_y -= st.exec_block->step_event_count;
     if (st.exec_block->direction_bits & (1<<Y_DIRECTION_BIT)) { sys_position[Y_AXIS]--; }
@@ -483,29 +481,30 @@ ISR(TIMER1_COMPA_vect)
    cause issues at high step rates if another high frequency asynchronous interrupt is
    added to Grbl.
 */
-// This interrupt is enabled by ISR_TIMER1_COMPAREA when it sets the motor port bits to execute
+// This interrupt is enabled by ISR(TIMER1_COMPA_vect) when it sets the motor port bits to execute
 // a step. This ISR resets the motor port after a short period (settings.pulse_microseconds)
 // completing one step cycle.
 ISR(TIMER0_OVF_vect)
 {
   // Reset stepping pins (leave the direction pins)
-  STEP_PORT = (STEP_PORT & ~STEP_MASK) | (step_port_invert_mask & STEP_MASK);
+  GPIO_SET_PINS(STEP, step_port_invert_mask);
   #ifdef ENABLE_DUAL_AXIS
-    STEP_PORT_DUAL = (STEP_PORT_DUAL & ~STEP_MASK_DUAL) | (step_port_invert_mask_dual & STEP_MASK_DUAL);
+    GPIO_SET_PINS(STEP_DUAL, step_port_invert_mask_dual);
   #endif
-  TCCR0B = 0; // Disable Timer0 to prevent re-entering this interrupt when it's not needed.
+  // Disable timer to prevent re-entering this interrupt when it's not needed.
+  SRT_STOP;
 }
 #ifdef STEP_PULSE_DELAY
   // This interrupt is used only when STEP_PULSE_DELAY is enabled. Here, the step pulse is
-  // initiated after the STEP_PULSE_DELAY time period has elapsed. The ISR TIMER2_OVF interrupt
+  // initiated after the STEP_PULSE_DELAY time period has elapsed. The ISR TIMER0_OVF interrupt
   // will then trigger after the appropriate settings.pulse_microseconds, as in normal operation.
   // The new timing between direction, step pulse, and step complete events are setup in the
   // st_wake_up() routine.
   ISR(TIMER0_COMPA_vect)
   {
-    STEP_PORT = st.step_bits; // Begin step pulse.
+    GPIO_SET_PINS(STEP, st.step_bits); // Begin step pulse.
     #ifdef ENABLE_DUAL_AXIS
-      STEP_PORT_DUAL = st.step_bits_dual;
+      GPIO_SET_PINS(STEP_DUAL, st.step_bits_dual);
     #endif
   }
 #endif
@@ -525,8 +524,8 @@ void st_generate_step_dir_invert_masks()
     step_port_invert_mask_dual = 0;
     dir_port_invert_mask_dual = 0;
     // NOTE: Dual axis invert uses the N_AXIS bit to set step and direction invert pins.    
-    if (bit_istrue(settings.step_invert_mask,bit(N_AXIS))) { step_port_invert_mask_dual = (1<<DUAL_STEP_BIT); }
-    if (bit_istrue(settings.dir_invert_mask,bit(N_AXIS))) { dir_port_invert_mask_dual = (1<<DUAL_DIRECTION_BIT); }
+    if (bit_istrue(settings.step_invert_mask,bit(N_AXIS))) { step_port_invert_mask_dual = (1<<STEP_DUAL_BIT); }
+    if (bit_istrue(settings.dir_invert_mask,bit(N_AXIS))) { dir_port_invert_mask_dual = (1<<DIRECTION_DUAL_BIT); }
   #endif
 }
 
@@ -551,14 +550,14 @@ void st_reset()
   st.dir_outbits = dir_port_invert_mask; // Initialize direction bits to default.
 
   // Initialize step and direction port pins.
-  STEP_PORT = (STEP_PORT & ~STEP_MASK) | step_port_invert_mask;
-  DIRECTION_PORT = (DIRECTION_PORT & ~DIRECTION_MASK) | dir_port_invert_mask;
-  
-  #ifdef ENABLE_DUAL_AXIS
-    st.dir_outbits_dual = dir_port_invert_mask_dual;
-    STEP_PORT_DUAL = (STEP_PORT_DUAL & ~STEP_MASK_DUAL) | step_port_invert_mask_dual;
-    DIRECTION_PORT_DUAL = (DIRECTION_PORT_DUAL & ~DIRECTION_MASK_DUAL) | dir_port_invert_mask_dual;
-  #endif
+  GPIO_SET_PINS(STEP, step_port_invert_mask);
+  GPIO_SET_PINS(DIRECTION, dir_port_invert_mask);
+
+#ifdef ENABLE_DUAL_AXIS
+  st.dir_outbits_dual = dir_port_invert_mask_dual;
+  GPIO_SET_PINS(STEP_DUAL, step_port_invert_mask_dual);
+  GPIO_SET_PINS(DIRECTION_DUAL, dir_port_invert_mask_dual);
+#endif
 }
 
 
@@ -566,31 +565,19 @@ void st_reset()
 void stepper_init()
 {
   // Configure step and direction interface pins
-  STEP_DDR |= STEP_MASK;
-  STEPPERS_DISABLE_DDR |= 1<<STEPPERS_DISABLE_BIT;
-  DIRECTION_DDR |= DIRECTION_MASK;
-  
+  GPIO_INIT_PINS(STEP);
+  GPIO_INIT_PINS(DIRECTION);
+  GPIO_INIT_PIN(STEPPERS_DISABLE);
+
   #ifdef ENABLE_DUAL_AXIS
-    STEP_DDR_DUAL |= STEP_MASK_DUAL;
-    DIRECTION_DDR_DUAL |= DIRECTION_MASK_DUAL;
+    GPIO_INIT_PINS(STEP_DUAL);
+    GPIO_INIT_PINS(DIRECTION_DUAL);
   #endif
 
-  // Configure Timer 1: Stepper Driver Interrupt
-  TCCR1B &= ~(1<<WGM13); // waveform generation = 0100 = CTC
-  TCCR1B |=  (1<<WGM12);
-  TCCR1A &= ~((1<<WGM11) | (1<<WGM10));
-  TCCR1A &= ~((1<<COM1A1) | (1<<COM1A0) | (1<<COM1B1) | (1<<COM1B0)); // Disconnect OC1 output
-  // TCCR1B = (TCCR1B & ~((1<<CS12) | (1<<CS11))) | (1<<CS10); // Set in st_go_idle().
-  // TIMSK1 &= ~(1<<OCIE1A);  // Set in st_go_idle().
-
-  // Configure Timer 0: Stepper Port Reset Interrupt
-  TIMSK0 &= ~((1<<OCIE0B) | (1<<OCIE0A) | (1<<TOIE0)); // Disconnect OC0 outputs and OVF interrupt.
-  TCCR0A = 0; // Normal operation
-  TCCR0B = 0; // Disable Timer0 until needed
-  TIMSK0 |= (1<<TOIE0); // Enable Timer0 overflow interrupt
-  #ifdef STEP_PULSE_DELAY
-    TIMSK0 |= (1<<OCIE0A); // Enable Timer0 Compare Match A interrupt
-  #endif
+  // Initialize Step Pulse Timer
+  SPT_INIT;
+  // Initialize Step pulse Reset Timer
+  SRT_INIT;
 }
 
 
@@ -706,7 +693,7 @@ void st_prep_buffer()
           #elif (DUAL_AXIS_SELECT == Y_AXIS)
             if (st_prep_block->direction_bits & (1<<Y_DIRECTION_BIT)) { 
           #endif
-            st_prep_block->direction_bits_dual = (1<<DUAL_DIRECTION_BIT); 
+            st_prep_block->direction_bits_dual = (1<<DIRECTION_DUAL_BIT); 
           }  else { st_prep_block->direction_bits_dual = 0; }
         #endif
         uint8_t idx;
@@ -1013,7 +1000,7 @@ void st_prep_buffer()
     float inv_rate = dt/(last_n_steps_remaining - step_dist_remaining); // Compute adjusted step rate inverse
 
     // Compute CPU cycles per step for the prepped segment.
-    uint32_t cycles = ceil( (TICKS_PER_MICROSECOND*1000000*60)*inv_rate ); // (cycles/step)
+    uint32_t cycles = ceil( (TICKS_PER_MICROSECOND*1000000*60.0)*inv_rate ); // (cycles/step)
 
     #ifdef ADAPTIVE_MULTI_AXIS_STEP_SMOOTHING
       // Compute step timing and multi-axis smoothing level.

@@ -35,7 +35,6 @@
 // one configuration file by placing their specific defaults and pin map at the bottom of this file.
 // If doing so, simply comment out these two defines and see instructions below.
 #define DEFAULTS_GENERIC
-#define CPU_MAP_ATMEGA328P // Arduino Uno CPU
 
 // Serial baud rate
 // #define BAUD_RATE 230400
@@ -674,6 +673,10 @@
 // updating lots of code to ensure everything is running correctly.
 // #define DUAL_AXIS_CONFIG_CNC_SHIELD_CLONE  // Uncomment to select. Comment other configs.
 
+
+// The arch-specific config file may be used to override some settings depending on the
+// underlying architecture.
+#include "arch_config.h"
 
 /* ---------------------------------------------------------------------------------------
    OEM Single File Configuration Option
