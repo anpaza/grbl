@@ -28,7 +28,7 @@ gpio_pin_mask_t probe_invert_mask;
 // Probe pin initialization routine.
 void probe_init()
 {
-  GPIO_INIT_PIN(PROBE); // Configure as input pin
+  GPIO_INIT_PIN(PROBE); // Configure as input pins
   #ifdef GPIO_PULLUP_PIN
     #ifdef DISABLE_PROBE_PIN_PULL_UP
       GPIO_PULLUP_PIN(PROBE, false); // Normal low operation. Requires external pull-down.

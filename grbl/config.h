@@ -30,12 +30,6 @@
 #include "grbl.h" // For Arduino IDE compatibility.
 
 
-// Define CPU pin map and default settings.
-// NOTE: OEMs can avoid the need to maintain/update the defaults.h and cpu_map.h files and use only
-// one configuration file by placing their specific defaults and pin map at the bottom of this file.
-// If doing so, simply comment out these two defines and see instructions below.
-#define DEFAULTS_GENERIC
-
 // Serial baud rate
 // #define BAUD_RATE 230400
 #define BAUD_RATE 115200
@@ -673,23 +667,17 @@
 // updating lots of code to ensure everything is running correctly.
 // #define DUAL_AXIS_CONFIG_CNC_SHIELD_CLONE  // Uncomment to select. Comment other configs.
 
-
-// The arch-specific config file may be used to override some settings depending on the
-// underlying architecture.
-#include "arch_config.h"
-
 /* ---------------------------------------------------------------------------------------
    OEM Single File Configuration Option
 
-   Instructions: Paste the cpu_map and default setting definitions below without an enclosing
-   #ifdef. Comment out the CPU_MAP_xxx and DEFAULT_xxx defines at the top of this file, and
-   the compiler will ignore the contents of defaults.h and cpu_map.h and use the definitions
-   below.
+   Instructions: Modify MACHINE variable at the top of Makefile, or just run as:
+
+        make MACHINE=mycnc
+
+   Then create your own port/avr/machine/mycnc.h and put all your board-specific
+   definitions there, also see the comment in port/avr/machine.h for help.
+   This is a replacement for what was known before as cpu_map.h and defaults.h.
+   Most likely you won't have to modify any of the stock Grbl files.
 */
-
-// Paste CPU_MAP definitions here.
-
-// Paste default settings definitions here.
-
 
 #endif

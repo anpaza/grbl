@@ -20,6 +20,8 @@
 # This is a prototype Makefile. Modify it according to your needs.
 # You should at least check the settings for
 # DEVICE ....... The AVR device you compile for
+# MACHINE ...... Target machine name, the basename of one of the files under
+#                the port/avr/machine/ directory, without the ".h" suffix.
 # CLOCK ........ Target AVR clock rate in Hertz
 # OBJECTS ...... The object files created from your source files. This list is
 #                usually the same as the list of source files with suffix ".o".
@@ -29,6 +31,7 @@
 # FUSES ........ Parameters for avrdude to flash the fuses appropriately.
 
 DEVICE     ?= atmega328p
+MACHINE    ?= generic
 CLOCK      = 16000000
 PROGRAMMER ?= -c avrisp2 -P usb
 SOURCE    = main.c motion_control.c gcode.c spindle_control.c coolant_control.c serial.c \
@@ -49,7 +52,7 @@ AVRDUDE = avrdude $(PROGRAMMER) -p $(DEVICE) -B 10 -F
 
 # Compile flags for avr-gcc v4.9.2 compatible with the IDE. Or if you don't care about the warnings. 
 COMPILE = avr-gcc -Wall -Os -DF_CPU=$(CLOCK) -mmcu=$(DEVICE) -ffunction-sections -flto \
-	-I$(SOURCEDIR) -I$(ARCHDIR)
+	-I$(SOURCEDIR) -I$(ARCHDIR) -DMACHINE_H=\"machine/$(MACHINE).h\"
 
 
 OBJECTS = $(addprefix $(BUILDDIR)/,$(notdir $(SOURCE:.c=.o)))
@@ -109,3 +112,8 @@ cpp:
 
 # include generated header dependencies
 -include $(BUILDDIR)/$(OBJECTS:.o=.d)
+
+# Help if user specifies wrong MACHINE
+ifeq ($(wildcard $(ARCHDIR)/machine/$(MACHINE).h),)
+$(error The file $(ARCHDIR)/machine/$(MACHINE).h is missing. Please specify the basename of one of the files under $(ARCHDIR)/machine/ as the value of MACHINE)
+endif
